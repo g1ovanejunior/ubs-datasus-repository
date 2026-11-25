@@ -15,7 +15,8 @@ __pycache__/
 .vscode/
 .ipynb_checkpoints/
 
-# Ignora todos os CSVs e a pasta dados por padrão
-dados/*
-# Mas libera especificamente o CSV limpo para subir no GitHub
+
+# Ignora todos os CSVs por padrão
+*.csv
+# Libera apenas o CSV limpo dentro da pasta dados
 !dados/cnes_MA_2024_limpo.csv
