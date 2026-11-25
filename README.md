@@ -1,92 +1,28 @@
+🏥 Projeto DataSUS — Engenharia de Dados e Georreferenciamento (CNES - MA 2024)Responsável pela Arquitetura, Limpeza e Tratamento de Dados (ETL) & Modelagem SQLEste repositório documenta o pipeline completo de Engenharia de Dados (ETL — Extract, Transform, Load) aplicado aos microdados públicos do Cadastro Nacional de Estabelecimentos de Saúde (CNES-ST) do estado do Maranhão (2024).Dentro do projeto de georreferenciamento de unidades de saúde, atuei como responsável pela camada de dados, garantindo que informações brutas, redundantes e despadronizadas do DataSUS fossem auditadas, higienizadas, enriquecidas e modeladas em um banco de dados relacional (PostgreSQL) preparado para futuras integrações espaciais (PostGIS) e consumo por aplicações de localização.🎯 Meu Papel e Responsabilidades no ProjetoComo responsável pelos dados no projeto de georreferenciamento, conduzi todo o ciclo de vida inicial da informação antes de sua exibição em mapas ou APIs:Auditoria e Diagnóstico Exploratório: Mapeamento de 216 variáveis legadas do DataSUS, identificando taxas de nulidade, redundância temporal e inconsistências de cadastro.Engenharia de Limpeza e Transformação (Python/Pandas): Desenvolvimento de scripts reproduzíveis para seleção de atributos relevantes, deduplicação por chave única (CNES), filtragem de escopo assistencial e padronização de nomenclaturas (snake_case).Enriquecimento e Saneamento Territorial: Recuperação de 100% dos registros ausentes na coluna de Regiões de Saúde por meio de cruzamento territorial via código municipal do IBGE (CODUFMUN) e expressões regulares (Regex).Modelagem Relacional e Carga (PostgreSQL): Definição de esquema SQL com tipagem estrita, restrições de unicidade (PRIMARY KEY) e importação segura para o banco de dados via pgAdmin 4.📊 Diagnóstico Exploratório da Base BrutaA análise exploratória diagnosticou a qualidade e a estrutura dos 86.951 registros brutos (216 colunas) do CNES do Maranhão em 2024, identificando colunas nulas, códigos despadronizados e duplicidades mensais para consolidar uma base limpa de 2.814 unidades de atenção básica pronta para georreferenciamento e carga no banco de dados PostgreSQL.Principais Achados na Auditoria:Redundância Mensal: O dataset bruto consolida os 12 meses de competência (202401 a 202412), fazendo com que o mesmo estabelecimento apareça até 12 vezes.Colunas Vazias e Ruído Operacional: Identificação de 17 colunas 100% nulas (ex: COD_IR, MICR_REG, DISTRSAN, ESFERA_A, NATUREZA, NIV_HIER) e dezenas de matrizes burocráticas/financeiras (CO_BANCO, ALVARA, APxxCVyy, COMISSxx) sem utilidade para o georreferenciamento.Particularidades Fiscais do Setor Público: Constatação de que 56,31% dos estabelecimentos únicos possuem cpf_cnpj zerado (0) — comportamento padrão do DataSUS para unidades públicas geridas diretamente por prefeituras ou secretarias estaduais, cujo CNPJ fica vinculado à mantenedora (cnpj_mantenedora).Inconsistência em Regiões de Saúde: 45,64% dos estabelecimentos únicos estavam com REGSAUDE nulo e os demais apresentavam formatações sujas (ex: '001', '1', '0001', '008,', '2111').🧹 Pipeline de Limpeza e Tratamento de Dados (Python)O processamento foi estruturado em etapas sequenciais utilizando Python 3.12, Pandas e Regex (re):1. Seleção de Atributos e Padronização (snake_case)Eliminação de 202 colunas burocráticas ou vazias, mantendo apenas os 14 atributos essenciais para identificação, gestão, endereço e localização, traduzindo as siglas legadas do DataSUS para nomes descritivos em caixa baixa:CNES $\rightarrow$ cnesCODUFMUN $\rightarrow$ codigo_municipio_ibgeTP_UNID $\rightarrow$ tipo_unidadeCOD_CEP $\rightarrow$ cepREGSAUDE $\rightarrow$ regiao_saude (entre outros)2. Deduplicação e Consolidação AnualOrdenação temporal pela competência (COMPETEN) e remoção de duplicatas utilizando o código único do estabelecimento como chave, preservando apenas a atualização cadastral mais recente de cada unidade em 2024:df_deduplicado = df.drop_duplicates(subset=['cnes'], keep='last')
+# Redução de 86.951 registros brutos para 7.524 estabelecimentos únicos no MA
+3. Filtragem de Escopo para GeorreferenciamentoDos 36 tipos de estabelecimentos existentes no CNES (incluindo unidades administrativas, ambulâncias móveis e consultórios isolados), foram filtradas apenas as unidades físicas de porta aberta voltadas à Atenção Primária e Especialidades Básicas:Centro de saúde / Unidade básicaPosto de saúdePoliclínicaResultado do filtro: Consolidação de 2.814 estabelecimentos únicos prontos para mapeamento.4. Saneamento e Imputação Territorial (regiao_saude)Para eliminar os 668 valores ausentes (NaN) na coluna regiao_saude sem inventar dados:Aplicou-se limpeza via expressão regular (re.findall) para normalizar códigos corrompidos para o padrão de 2 dígitos (01 a 18).Construiu-se um dicionário territorial mapeando cada codigo_municipio_ibge à sua respectiva Região de Saúde usando a moda dos registros válidos da base estadual (incluindo o mapeamento manual de Davinópolis/MA — código 210375 $\rightarrow$ Região 11 - Imperatriz).Criou-se a coluna descritiva regiao_saude_nome, zerando 100% dos nulos territoriais.🗄️ Modelagem e Criação da Tabela no SQL (PostgreSQL)Com o arquivo .csv higienizado (UTF-8), foi projetada a estrutura relacional no PostgreSQL utilizando o pgAdmin 4, garantindo integridade referencial, tipagem adequada e prevenção contra registros duplicados por meio da definição de cnes como Chave Primária (PRIMARY KEY).Script DDL de Criação da Tabela:CREATE TABLE estabelecimentos_saude_ma (
+    cnes VARCHAR(15) PRIMARY KEY,
+    cpf_cnpj VARCHAR(20),
+    tipo_pessoa VARCHAR(50),
+    cnpj_mantenedora VARCHAR(20),
+    tipo_unidade VARCHAR(100),
+    vinculo_sus VARCHAR(10),
+    tipo_gestao VARCHAR(30),
+    nivel_dependencia VARCHAR(30),
+    perfil_clientela NUMERIC,
+    turno_atendimento NUMERIC,
+    competencia_ano_mes VARCHAR(10),
+    codigo_municipio_ibge INT,
+    regiao_saude VARCHAR(10),
+    cep VARCHAR(15),
+    regiao_saude_nome VARCHAR(100)
+);
+Carga e Validação no Banco de Dados:Após a importação do dataset limpo via Import/Export Data no pgAdmin (delimitador ,, codificação UTF8 e cabeçalho ativado), a integridade da carga foi validada via SQL:-- Validação do total de registros importados (2.814 unidades)
+SELECT COUNT(*) AS total_registros FROM estabelecimentos_saude_ma;
 
-# 🏥 Projeto DataSUS — Pipeline ETL e Tratamento de Dados do CNES (Maranhão - 2024)
-
-Este repositório contém o pipeline completo de **Engenharia e Tratamento de Dados (ETL — *Extract, Transform, Load*)** aplicado aos microdados públicos do **Cadastro Nacional de Estabelecimentos de Saúde (CNES)**, disponibilizados pelo **DataSUS** (Ministério da Saúde).
-
-O objetivo deste projeto é extrair, higienizar, enriquecer e estruturar os dados cadastrais e geográficos das unidades de saúde do estado do **Maranhão (MA)** referentes ao ano de **2024**, preparando uma base confiável e otimizada para ingestão em banco de dados relacional/espacial (**PostgreSQL / PostGIS**) e posterior consumo em aplicações de georreferenciamento (como um mapa interativo de Unidades Básicas de Saúde).
-
----
-
-## 🛠️ Tecnologias e Ferramentas Utilizadas
-
-* **Extração (R):** Linguagem **R** com o pacote [`microdatasus`](https://github.com/rfsaldanha/microdatasus) (consumo direto dos arquivos `.DBC` via FTP do DataSUS) e `readr`.
-* **Transformação e Análise (Python):** Linguagem **Python** utilizando `pandas`, `numpy`, `pathlib` e `re` (Expressões Regulares / Regex) em ambiente **Jupyter Notebook** (`.ipynb`) e scripts `.py`.
-* **Armazenamento Alvo:** **PostgreSQL** com extensão espacial **PostGIS**.
-* **Versionamento:** **Git** e **GitHub**.
-
----
-
-## 📊 Panorama Geral dos Dados (Antes vs. Depois)
-
-| Etapa do Pipeline | Quantidade de Registros (Linhas) | Quantidade de Atributos (Colunas) | Descrição do Estado da Base |
-| :--- | :---: | :---: | :--- |
-| **1. Base Bruta Extraída (12 meses)** | `86.951` | `216` | Dados acumulados de Jan/2024 a Dez/2024 (`CNES-ST`) com siglas legadas e colunas vazias. |
-| **2. Seleção e Renomeação** | `86.951` | `24` | Remoção de 17 colunas 100% nulas e 175 colunas burocráticas/operacionais sem uso geográfico. |
-| **3. Deduplicação Anual** | `7.524` | `24` | Consolidação de estabelecimentos únicos no Maranhão, mantendo o cadastro mais recente. |
-| **4. Filtragem de Escopo (UBS/Policlínicas)** | `2.814` | `24` | Retenção exclusiva de unidades de Atenção Básica e Policlínicas. |
-| **5. Imputação Territorial (`regiao_saude`)** | `2.814` | `25` | Padronização de códigos e eliminação de **100% dos valores nulos** via cruzamento IBGE. |
-
----
-
-## 🔄 Passo a Passo do Pipeline de Tratamento de Dados (ETL)
-
-### Etapa 1: Extração dos Microdados (`Extract`)
-Os dados brutos do módulo **CNES-ST (Estabelecimentos)** foram extraídos diretamente dos servidores do DataSUS utilizando o pacote `microdatasus` em R:
-* **Escopo:** Estado do Maranhão (`uf = "MA"`), abrangendo todas as 12 competências mensais de 2024 (`month_start = 1` a `month_end = 12`).
-* **Pré-processamento nativo:** A função `process_cnes()` realizou a descompressão dos arquivos `.DBC`, decodificação de tabelas auxiliares e enriquecimento inicial com metadados municipais (latitude, longitude, altitude e área do município).
-* **Saída gerada:** `cnes_estabelecimentos_MA_2024_completo.csv` (86.951 linhas × 216 colunas).
-
----
-
-### Etapa 2: Diagnóstico e *Data Profiling* (Análise Exploratória)
-Antes de alterar qualquer dado, foi executado um diagnóstico estrutural (*Data Profiling*) no Python para mapear tipos de dados (`dtypes`), cardinalidade e taxas de valores ausentes (*missing values* / `NaN`):
-1. **Colunas Totalmente Mortas (100% Nulas):** Foram identificadas **17 colunas** sem nenhum valor preenchido em todo o dataset (ex.: `COD_IR`, `MICR_REG`, `DISTRSAN`, `ESFERA_A`, `RETENCAO`, `NATUREZA`, `NIV_HIER`, `AV_ACRED`, `AV_PNASS`, entre outras).
-2. **Colunas de Ruído Operacional / Faturamento:** Cerca de 175 colunas continham matrizes internas de faturamento e convênios (`AP01CV01` a `AP07CV07`), comissões hospitalares (`COMISS01` a `COMISS12`) e contagens granulares de instalações (`QTINSTxx`), dispensáveis para o mapeamento voltado ao cidadão.
-3. **Anomalias de Codificação e Preenchimento:** Identificou-se que a coluna `REGSAUDE` apresentava **45,64% de valores nulos** e inconsistências de formatação (ex.: `'001'`, `'0001'`, `'1'`, `'2111'`).
-
----
-
-### Etapa 3: *Feature Selection* e Padronização (`snake_case`)
-Para otimizar o armazenamento e facilitar consultas SQL no PostgreSQL, realizou-se a seleção de atributos (*Feature Selection*) e o mapeamento semântico das colunas:
-* **Tradução de Siglas Legadas:** Colunas originais do DataSUS foram renomeadas para termos autoexplicativos (ex.: `CODUFMUN` $\rightarrow$ `codigo_municipio_ibge`, `TP_UNID` $\rightarrow$ `tipo_unidade`, `munResLat` $\rightarrow$ `municipio_latitude`).
-* **Padrão `snake_case`:** Todos os identificadores foram convertidos para letras minúsculas com palavras separadas por sublinhado (`_`), evitando problemas de *case-sensitivity* e necessidade de aspas duplas em queries SQL.
-
----
-
-### Etapa 4: Deduplicação Temporal (`Deduplication`)
-Como o DataSUS publica arquivos mensais contendo a fotografia completa da rede de saúde a cada mês, cada estabelecimento ativo aparecia até 12 vezes no dataset acumulado.
-* **Ordenação Cronológica:** Os registros foram ordenados pela coluna `competencia_ano_mes` (`COMPETEN`, formato `YYYYMM` de `202401` a `202412`).
-* **Consolidação:** Aplicou-se `drop_duplicates(subset=['cnes'], keep='last')`, reduzindo a base de **86.951 registros brutos** para **7.524 estabelecimentos únicos** no Maranhão, preservando sempre a atualização cadastral mais recente do ano.
-
----
-
-### Etapa 5: Filtragem de Domínio (Escopo da Aplicação)
-Com foco na Atenção Primária e atendimento ambulatorial público, aplicou-se um filtro categórico na coluna `tipo_unidade`, selecionando exclusivamente:
-* `Centro de saúde / Unidade básica`
-* `Posto de saúde`
-* `Policlínica`
-
-Essa etapa filtrou a base de 7.524 estabelecimentos gerais para **2.814 unidades** diretamente alinhadas ao objetivo da aplicação.
-
----
-
-### Etapa 6: Higienização via Regex e Imputação Territorial (`regiao_saude`)
-A coluna `regiao_saude` (`REGSAUDE`) possuía **45,64% de registros nulos** e códigos despadronizados. Para recuperar 100% dessa informação sem inventar dados:
-1. **Normalização com Expressões Regulares (`re`):** Extraíram-se apenas os dígitos numéricos, removendo caracteres inválidos e o prefixo estadual `21` quando cadastrado incorretamente (ex.: `2111` $\rightarrow$ `11`), padronizando todas as **18 Regiões de Saúde do Maranhão** com dois dígitos (`'01'` a `'18'`).
-2. **Imputação Determinística por Município (Moda):** Como a divisão regional de saúde é territorialmente fixa por município, criou-se um dicionário mapeando cada `codigo_municipio_ibge` à sua respectiva `regiao_saude` predominante na base. O único município sem registro preenchido (`210375` — Davinópolis) foi mapeado manualmente para a Região `11` (Imperatriz).
-3. **Enriquecimento Semântico:** Criou-se a coluna `regiao_saude_nome` traduzindo cada código numérico para sua nomenclatura oficial (ex.: `01 - São Luís`, `11 - Imperatriz`), atingindo **0% de valores nulos**.
-
----
-
-## 📁 Estrutura do Repositório
-
-```text
-projeto-datasus/
-├── main/
-│   ├── extração_cnes.R      # Script em R para download e extração via microdatasus
-│   └── main.ipynb           # Jupyter Notebook com todo o pipeline de limpeza e análise
-├── .gitignore               # Ignora arquivos CSV pesados (>50MB) e ambientes virtuais (.venv)
-└── README.md                # Documentação técnica do projeto
-```
-
-> **Nota sobre os dados:** Os arquivos `.csv` brutos (~80 MB) são omitidos do versionamento via `.gitignore` para respeitar as boas práticas e limites de tamanho de repositório do GitHub, podendo ser reproduzidos integralmente executando os scripts contidos neste projeto.
+-- Consulta de distribuição por Região de Saúde
+SELECT regiao_saude_nome, COUNT(*) AS qtd_unidades
+FROM estabelecimentos_saude_ma
+GROUP BY regiao_saude_nome
+ORDER BY qtd_unidades DESC;
+🛠️ Tecnologias UtilizadasLinguagem: Python 3.12Manipulação e Limpeza de Dados: Pandas, Pathlib, Regex (re)Ambiente de Desenvolvimento: Jupyter Notebook / VS CodeBanco de Dados & Administração: PostgreSQL & pgAdmin 4Versionamento: Git & GitHub🚀 Próximos Passos (Evolução Geoespacial)[ ] Geocodificação: Enriquecer a tabela com coordenadas exatas (latitude e longitude) a partir da coluna cep e endereços oficiais via APIs de geocodificação.[ ] Extensão PostGIS: Habilitar CREATE EXTENSION postgis;, converter as coordenadas em coluna espacial GEOMETRY(Point, 4326) e criar índices espaciais (GIST) para consultas de proximidade.
